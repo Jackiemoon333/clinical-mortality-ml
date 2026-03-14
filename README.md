@@ -36,7 +36,7 @@ This project uses the [eICU Collaborative Research Database](https://eicu-crd.mi
 ### 1. Create conda environment
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.conda.yml
 conda activate icu_mortality
 ```
 
@@ -125,7 +125,7 @@ clinical-mortality-ml/
 ├── tests/                  # Unit tests
 │   └── test_model.py
 ├── notebooks/              # Exploration and ETL
-└── environment.yml        # Conda dependencies
+└── environment.conda.yml # Conda dependencies (optional; Streamlit Cloud uses requirements.txt)
 ```
 
 ## Model
