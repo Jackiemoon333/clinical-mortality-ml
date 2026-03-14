@@ -1,0 +1,7 @@
+vendor/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# eICU database too large for GitHub (100MB limit)
+data/raw/

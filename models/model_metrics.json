@@ -1,0 +1,17 @@
+{
+  "roc_auc": 0.9144135649013321,
+  "cv_roc_auc_mean": 0.9152159596974012,
+  "cv_roc_auc_std": 0.018545337326761946,
+  "logistic_roc_auc": 0.8257067910230254,
+  "n_train": 3486,
+  "n_test": 872,
+  "n_features": 23,
+  "class_balance": {
+    "train_pos": 294,
+    "train_neg": 3192,
+    "test_pos": 73,
+    "test_neg": 799
+  },
+  "model_type": "RandomForest",
+  "n_estimators": 200
+}
