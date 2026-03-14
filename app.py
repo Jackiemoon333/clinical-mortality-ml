@@ -494,6 +494,10 @@ with tab4:
             df_apache = df_apache.dropna(subset=["predictedicumortality"])
             df_apache["predictedicumortality"] = pd.to_numeric(df_apache["predictedicumortality"], errors="coerce")
             df_apache = df_apache.dropna(subset=["predictedicumortality"])
+            # Clean age to match training ("> 89" -> 90)
+            df_apache["age"] = df_apache["age"].replace("> 89", 90)
+            df_apache["age"] = pd.to_numeric(df_apache["age"], errors="coerce")
+            df_apache["age"] = df_apache["age"].fillna(df_apache["age"].median())
             if len(df_apache) > 0:
                 X_apache = df_apache.drop(columns=["target_mortality", "patientunitstayid"], errors="ignore")
                 X_apache = X_apache[EXPECTED_COLUMNS] if all(c in X_apache.columns for c in EXPECTED_COLUMNS) else X_apache
