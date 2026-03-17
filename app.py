@@ -17,14 +17,9 @@ st.caption(
     "([citation](https://www.nature.com/articles/sdata2018178))."
 )
 
-# ---- Load models ----
+# ---- Load model ----
 BASE_DIR = Path(__file__).resolve().parent
-rf_model = joblib.load(BASE_DIR / "models" / "mortality_model.pkl")
-log_path = BASE_DIR / "models" / "logistic_model.pkl"
-log_model = joblib.load(log_path) if log_path.exists() else None
-model_options = ["Random Forest"] + (["Logistic Regression"] if log_model is not None else [])
-model_choice = st.sidebar.selectbox("Model", model_options, index=0)
-model = log_model if model_choice == "Logistic Regression" else rf_model
+model = joblib.load(BASE_DIR / "models" / "mortality_model.pkl")
 
 # Expected columns for the model (must match training data)
 EXPECTED_COLUMNS = [
@@ -70,6 +65,44 @@ FEATURE_DISPLAY_NAMES = {
     "predictedicumortality": "Predicted ICU Mortality",
     "predictedhospitalmortality": "Predicted Hospital Mortality",
 }
+
+# Clinically plausible ranges for validation (lo, hi)
+INPUT_RANGES = {
+    "age": (18, 120),
+    "max_heart_rate": (20, 250),
+    "min_systolic_bp": (40, 250),
+    "avg_diastolic_bp": (20, 150),
+    "max_wbc": (0.5, 100),
+    "min_wbc": (0.5, 100),
+    "avg_wbc": (0.5, 100),
+    "max_creatinine": (0.2, 25),
+    "min_creatinine": (0.2, 25),
+    "avg_creatinine": (0.2, 25),
+    "max_sodium": (100, 180),
+    "min_sodium": (100, 180),
+    "avg_sodium": (100, 180),
+}
+
+
+def validate_inputs(row):
+    """Validate inputs are within clinically plausible ranges and logically consistent.
+    Returns (is_valid, list of error messages)."""
+    errors = []
+    # Range checks
+    for key, (lo, hi) in INPUT_RANGES.items():
+        val = row.get(key)
+        if val is not None and not (lo <= float(val) <= hi):
+            label = FEATURE_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
+            errors.append(f"{label}: {val} outside plausible range ({lo}–{hi})")
+    # Logical consistency: min <= max for paired values
+    if row.get("min_sodium", 0) > row.get("max_sodium", 0):
+        errors.append("Min sodium cannot exceed max sodium")
+    if row.get("min_creatinine", 0) > row.get("max_creatinine", 0):
+        errors.append("Min creatinine cannot exceed max creatinine")
+    if row.get("min_wbc", 0) > row.get("max_wbc", 0):
+        errors.append("Min WBC cannot exceed max WBC")
+    return (len(errors) == 0, errors)
+
 
 def format_feature_name(name):
     """Map internal SHAP feature name to human-readable display label."""
@@ -248,10 +281,15 @@ input_data = pd.DataFrame([{
 # ---- Tab 1: Mortality Prediction ----
 with tab1:
     if st.button("Predict Mortality Risk"):
-        prob = model.predict_proba(input_data)[0][1]
-        risk_percent = prob * 100
-        ci_str = ""
-        if model_choice == "Random Forest":
+        row = input_data.iloc[0].to_dict()
+        valid, errors = validate_inputs(row)
+        if not valid:
+            for err in errors:
+                st.error(err)
+            st.info("Adjust values to clinically plausible ranges and try again.")
+        else:
+            prob = model.predict_proba(input_data)[0][1]
+            risk_percent = prob * 100
             trees = model.named_steps["model"].estimators_
             tree_probs = np.array([t.predict_proba(model.named_steps["preprocess"].transform(input_data))[:, 1] for t in trees])
             tree_probs = tree_probs.ravel()
@@ -259,15 +297,15 @@ with tab1:
             ci_lo = np.clip(prob - std_p, 0, 1) * 100
             ci_hi = np.clip(prob + std_p, 0, 1) * 100
             ci_str = f" (95% CI: {ci_lo:.1f}%–{ci_hi:.1f}%)"
-        st.progress(int(risk_percent))
-        if risk_percent < 5:
-            st.success(f"Low Risk: {risk_percent:.2f}%{ci_str}")
-        elif risk_percent < 20:
-            st.warning(f"Moderate Risk: {risk_percent:.2f}%{ci_str}")
-        else:
-            st.error(f"High Risk: {risk_percent:.2f}%{ci_str}")
-        st.session_state["last_patient_data"] = input_data
-        st.session_state["last_risk_percent"] = risk_percent
+            st.progress(int(risk_percent))
+            if risk_percent < 5:
+                st.success(f"Low Risk: {risk_percent:.2f}%{ci_str}")
+            elif risk_percent < 20:
+                st.warning(f"Moderate Risk: {risk_percent:.2f}%{ci_str}")
+            else:
+                st.error(f"High Risk: {risk_percent:.2f}%{ci_str}")
+            st.session_state["last_patient_data"] = input_data
+            st.session_state["last_risk_percent"] = risk_percent
 
 # ---- Tab 2: Patient Explainability ----
 with tab2:
@@ -281,14 +319,9 @@ with tab2:
             X_transformed = X_transformed.reshape(1, -1)
         n_features = X_transformed.shape[1]
         inner_model = model.named_steps['model']
-        if model_choice == "Random Forest":
-            explainer = shap.TreeExplainer(inner_model)
-            shap_values = explainer.shap_values(X_transformed)
-            shap_for_class1 = shap_values[1] if isinstance(shap_values, list) else shap_values
-        else:
-            explainer = shap.LinearExplainer(inner_model, X_transformed)
-            shap_values = explainer.shap_values(X_transformed)
-            shap_for_class1 = shap_values
+        explainer = shap.TreeExplainer(inner_model)
+        shap_values = explainer.shap_values(X_transformed)
+        shap_for_class1 = shap_values[1] if isinstance(shap_values, list) else shap_values
         feature_names = get_transformed_feature_names(n_features)
 
         # A. Prediction summary
@@ -395,14 +428,9 @@ with tab3:
             X_all_transformed = X_all_transformed.reshape(1, -1)
         n_features = X_all_transformed.shape[1]
         inner_model = model.named_steps['model']
-        if model_choice == "Random Forest":
-            explainer = shap.TreeExplainer(inner_model)
-            shap_values_all = explainer.shap_values(X_all_transformed)
-            shap_for_class1 = shap_values_all[1] if isinstance(shap_values_all, list) else shap_values_all
-        else:
-            explainer = shap.LinearExplainer(inner_model, X_all_transformed)
-            shap_values_all = explainer.shap_values(X_all_transformed)
-            shap_for_class1 = shap_values_all
+        explainer = shap.TreeExplainer(inner_model)
+        shap_values_all = explainer.shap_values(X_all_transformed)
+        shap_for_class1 = shap_values_all[1] if isinstance(shap_values_all, list) else shap_values_all
         feature_names = get_transformed_feature_names(n_features)
 
         shap_arr = np.asarray(shap_for_class1)
@@ -456,9 +484,8 @@ with tab4:
         with open(metrics_path) as f:
             metrics = json.load(f)
         c1, c2, c3, c4 = st.columns(4)
-        auc_key = "logistic_roc_auc" if model_choice == "Logistic Regression" else "roc_auc"
         with c1:
-            st.metric("ROC-AUC", f"{metrics.get(auc_key, metrics.get('roc_auc', 0)):.3f}")
+            st.metric("ROC-AUC", f"{metrics.get('roc_auc', 0):.3f}")
         with c2:
             cv_mean = metrics.get("cv_roc_auc_mean")
             cv_std = metrics.get("cv_roc_auc_std")
@@ -474,12 +501,70 @@ with tab4:
         st.info("Run `python src/models/train_model.py` to generate model metrics.")
         st.metric("ROC-AUC", "—")
     st.subheader("Model Description")
-    st.markdown("""
-    - **Algorithm:** Random Forest (200 trees, class-balanced)
+    best_params = metrics.get("best_params", {}) if metrics_path.exists() else {}
+    n_est = metrics.get("n_estimators", 200)
+    st.markdown(f"""
+    - **Algorithm:** Random Forest ({n_est} trees, class-balanced)
     - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
     - **Output:** Probability of ICU mortality (0–100%)
     - **Data:** eICU Collaborative Research Database
     """)
+    if best_params:
+        with st.expander("Hyperparameters (tuned via RandomizedSearchCV)"):
+            st.json(best_params)
+            st.caption("See [docs/HYPERPARAMETER_TUNING.md](docs/HYPERPARAMETER_TUNING.md) for rationale.")
+    # Fairness analysis
+    with st.expander("Fairness: stratified performance by subgroup"):
+        fairness = metrics.get("fairness", []) if metrics_path.exists() else []
+        if fairness:
+            fairness = metrics["fairness"]
+            fairness_df = pd.DataFrame(fairness)
+            fairness_df = fairness_df.rename(columns={"subgroup": "Subgroup", "n": "n", "n_positive": "Deaths", "roc_auc": "ROC-AUC"})
+            st.dataframe(fairness_df[["Subgroup", "n", "Deaths", "ROC-AUC"]], use_container_width=True)
+            st.caption(
+                "ROC-AUC computed on test set within each subgroup. "
+                "Small subgroups (n < 20 or < 3 deaths) are excluded. "
+                "Large gaps between subgroups may indicate differential performance."
+            )
+        else:
+            st.caption("Run `python src/models/train_model.py` to generate fairness metrics.")
+
+    # Calibration plot
+    with st.expander("Calibration: predicted vs observed risk"):
+        cal = metrics.get("calibration", {}) if metrics_path.exists() else {}
+        if cal and "mean_predicted" in cal and "fraction_positive" in cal:
+            mean_pred = cal["mean_predicted"]
+            frac_pos = cal["fraction_positive"]
+            fig, ax = plt.subplots(figsize=(7, 6))
+            ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Perfect calibration")
+            ax.plot(mean_pred, frac_pos, "s-", color="#1f77b4", label="Model")
+            ax.set_xlabel("Mean predicted probability")
+            ax.set_ylabel("Fraction of positives (observed)")
+            ax.set_title("Calibration Curve (test set)")
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.legend(loc="lower right")
+            fig.patch.set_facecolor("#0e1117")
+            ax.set_facecolor("#0e1117")
+            ax.tick_params(colors="white")
+            ax.xaxis.label.set_color("white")
+            ax.yaxis.label.set_color("white")
+            ax.title.set_color("white")
+            for spine in ax.spines.values():
+                spine.set_color("white")
+            for text in ax.get_yticklabels() + ax.get_xticklabels():
+                text.set_color("white")
+            ax.legend(facecolor="#0e1117", edgecolor="white", labelcolor="white")
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close()
+            st.caption(
+                "Points near the diagonal indicate well-calibrated probabilities. "
+                "Points above the line: model underestimates risk; below: overestimates."
+            )
+        else:
+            st.caption("Run `python src/models/train_model.py` to generate calibration data.")
+
     st.subheader("Disclaimer")
     st.warning(
         "This tool is for educational and portfolio demonstration only. "

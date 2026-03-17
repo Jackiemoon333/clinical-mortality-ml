@@ -1,7 +1,7 @@
 {
-  "roc_auc": 0.9144135649013321,
-  "cv_roc_auc_mean": 0.9152159596974012,
-  "cv_roc_auc_std": 0.018545337326761946,
+  "roc_auc": 0.9192140861007766,
+  "cv_roc_auc_mean": 0.9193510620067036,
+  "cv_roc_auc_std": 0.019074427198284876,
   "logistic_roc_auc": 0.8257067910230254,
   "n_train": 3486,
   "n_test": 872,
@@ -13,5 +13,86 @@
     "test_neg": 799
   },
   "model_type": "RandomForest",
-  "n_estimators": 200
+  "n_estimators": 200,
+  "best_params": {
+    "n_estimators": "200",
+    "min_samples_split": "2",
+    "min_samples_leaf": "1",
+    "max_features": "log2",
+    "max_depth": "None"
+  },
+  "fairness": [
+    {
+      "subgroup": "Age <50",
+      "n": 198,
+      "n_positive": 3,
+      "roc_auc": 0.8778
+    },
+    {
+      "subgroup": "Age 50-64",
+      "n": 214,
+      "n_positive": 7,
+      "roc_auc": 0.9161
+    },
+    {
+      "subgroup": "Age 65-79",
+      "n": 309,
+      "n_positive": 31,
+      "roc_auc": 0.9116
+    },
+    {
+      "subgroup": "Age 80+",
+      "n": 151,
+      "n_positive": 32,
+      "roc_auc": 0.8954
+    },
+    {
+      "subgroup": "Gender: Male",
+      "n": 532,
+      "n_positive": 40,
+      "roc_auc": 0.9276
+    },
+    {
+      "subgroup": "Gender: Female",
+      "n": 340,
+      "n_positive": 33,
+      "roc_auc": 0.9087
+    },
+    {
+      "subgroup": "Ethnicity: Caucasian",
+      "n": 697,
+      "n_positive": 61,
+      "roc_auc": 0.9172
+    },
+    {
+      "subgroup": "Ethnicity: Hispanic",
+      "n": 48,
+      "n_positive": 6,
+      "roc_auc": 0.8571
+    }
+  ],
+  "calibration": {
+    "mean_predicted": [
+      0.0204,
+      0.1476,
+      0.2486,
+      0.3544,
+      0.4614,
+      0.5495,
+      0.6503,
+      0.7423,
+      0.8467
+    ],
+    "fraction_positive": [
+      0.0144,
+      0.0471,
+      0.25,
+      0.6667,
+      0.6364,
+      0.7,
+      1.0,
+      1.0,
+      1.0
+    ]
+  }
 }

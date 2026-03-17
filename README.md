@@ -1,5 +1,7 @@
 # ICU Mortality Risk Predictor
 
+**[Live demo](https://clinical-mortality-ml-ja.streamlit.app/)**
+
 A machine learning application that predicts ICU mortality risk from patient vitals and lab values, with SHAP-based explainability for interpretable predictions.
 
 ## Overview
@@ -12,6 +14,29 @@ This project uses the [eICU Collaborative Research Database](https://eicu-crd.mi
 - View global feature importance across example patients
 
 **Disclaimer:** This project is for educational and portfolio demonstration purposes only. It is not intended for clinical use.
+
+## Key Results
+
+| Metric | Value |
+|--------|-------|
+| Test ROC-AUC | 0.914 |
+| 5-fold CV ROC-AUC | 0.915 ± 0.019 |
+| Training samples | 3,486 |
+| Test samples | 872 |
+| Class balance (train) | 294 positive / 3,192 negative (~8.4% mortality) |
+| Features (post-preprocessing) | 23 |
+
+**Model:** Random Forest (hyperparameters tuned via RandomizedSearchCV, 5-fold CV ROC-AUC). Preprocessing: `ColumnTransformer` with `OneHotEncoder` for categoricals (gender, ethnicity) and `SimpleImputer(strategy="median")` for numerics. See [docs/HYPERPARAMETER_TUNING.md](docs/HYPERPARAMETER_TUNING.md) for parameter rationale and how tuning relates to fairness/calibration.
+
+**Top drivers of risk** (by mean |SHAP|): sodium (min/max), heart rate, creatinine, systolic BP, age, WBC.
+
+**APACHE comparison:** The app includes a scatter plot comparing model predictions with eICU's built-in APACHE predicted ICU mortality; correlation is computed on a sample from the training data.
+
+**Fairness:** Stratified ROC-AUC by age group, gender, and ethnicity (see Model Info tab and [docs/MODEL_CARD.md](docs/MODEL_CARD.md)).
+
+**Calibration:** Calibration curve (predicted vs observed risk) on the test set; see Model Info tab.
+
+**Input validation:** Vitals and labs are validated against clinically plausible ranges before prediction; min/max pairs (e.g., sodium, creatinine, WBC) must satisfy min ≤ max.
 
 ## Screenshots
 
@@ -54,7 +79,7 @@ Place the eICU SQLite database at `data/raw/eicu_v2_0_1.sqlite3` and run the fea
 python src/models/train_model.py
 ```
 
-This creates `models/mortality_model.pkl`, `models/logistic_model.pkl`, and `models/model_metrics.json`.
+This creates `models/mortality_model.pkl` and `models/model_metrics.json`.
 
 ### 4. Run the app
 
@@ -132,7 +157,7 @@ clinical-mortality-ml/
 
 See [docs/MODEL_CARD.md](docs/MODEL_CARD.md) for intended use, limitations, and ethical considerations.
 
-- **Algorithms:** Random Forest (200 trees) and Logistic Regression; toggle in app sidebar
+- **Algorithm:** Random Forest (200 trees, class-balanced)
 - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
 - **Output:** Probability of ICU mortality (0–100%)
 

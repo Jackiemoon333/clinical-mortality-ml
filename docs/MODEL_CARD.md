@@ -6,7 +6,7 @@
 - **Version:** 1.0
 - **Type:** Binary classification (Random Forest)
 - **Framework:** scikit-learn
-- **Architecture:** Pipeline with ColumnTransformer (OneHotEncoder for categoricals, SimpleImputer for numerics) and RandomForestClassifier (200 trees, class_weight="balanced")
+- **Architecture:** Pipeline with ColumnTransformer (OneHotEncoder for categoricals, SimpleImputer for numerics) and RandomForestClassifier. Hyperparameters tuned via RandomizedSearchCV (5-fold CV, ROC-AUC).
 
 ## Intended Use
 
@@ -19,7 +19,7 @@
 - **Data scope:** Trained on the eICU Collaborative Research Database (2014–2015 US ICU stays). Performance may not generalize to other populations, time periods, or care settings.
 - **Feature availability:** Requires vitals, labs, and APACHE scores. Missing or incomplete data are imputed with medians, which may introduce bias.
 - **Temporal validity:** Training data is from 2014–2015; clinical practice and outcomes may have changed.
-- **Demographic fairness:** Performance may vary across age, gender, and ethnicity subgroups. No formal fairness evaluation was conducted.
+- **Demographic fairness:** Performance may vary across age, gender, and ethnicity subgroups. See Fairness Evaluation below.
 - **Explainability:** SHAP values provide local approximations; they do not establish causal relationships.
 
 ## Training Data
@@ -40,6 +40,20 @@
 | n_features | 22+ (after one-hot encoding) |
 
 *Exact values are written to `models/model_metrics.json` when running `python src/models/train_model.py`.*
+
+## Fairness Evaluation
+
+Stratified ROC-AUC was computed on the held-out test set by age group, gender, and ethnicity. Subgroups with fewer than 20 samples or fewer than 3 positive (death) cases were excluded, as ROC-AUC is unreliable with very small samples.
+
+**Interpretation:** Performance is generally consistent across subgroups (typical ROC-AUC 0.86–0.94). Some variation is expected due to sample size and class imbalance within subgroups. Larger gaps (e.g., >0.05 ROC-AUC) between demographic groups warrant further investigation before deployment. The eICU dataset is US-based and may not represent global diversity; underrepresented ethnicities in the test set may not have sufficient data for reliable subgroup metrics.
+
+See the app's Model Info tab for the full fairness table.
+
+## Calibration
+
+A calibration curve compares mean predicted probability (x-axis) with the observed fraction of positives (y-axis) in each probability bin. A well-calibrated model lies near the diagonal: a predicted 30% risk should correspond to ~30% observed mortality.
+
+**Interpretation:** Random Forest models often exhibit some miscalibration (e.g., overconfident in extreme predictions). The app's Model Info tab includes a calibration plot on the test set. Points above the diagonal indicate underestimation of risk; points below indicate overestimation. For clinical use, post-hoc calibration (e.g., Platt scaling or isotonic regression) could be applied if needed.
 
 ## Ethical Considerations
 

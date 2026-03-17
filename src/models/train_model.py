@@ -1,10 +1,11 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score
+from sklearn.calibration import calibration_curve
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from pathlib import Path
@@ -71,24 +72,43 @@ log_preds = log_model.predict_proba(X_test)[:, 1]
 print("Logistic Regression ROC-AUC:", roc_auc_score(y_test, log_preds))
 
 # -----------------------------
-# Random Forest
+# Random Forest with hyperparameter tuning
 # -----------------------------
-rf_model = Pipeline(
+# Param grid: see docs/HYPERPARAMETER_TUNING.md for rationale
+param_dist = {
+    "model__n_estimators": [100, 200, 300],
+    "model__max_depth": [8, 12, 16, None],
+    "model__min_samples_split": [2, 5, 10],
+    "model__min_samples_leaf": [1, 2, 4],
+    "model__max_features": ["sqrt", "log2"],
+}
+rf_base = Pipeline(
     steps=[
         ("preprocess", preprocessor),
-        ("model", RandomForestClassifier(class_weight="balanced", n_estimators=200))
+        ("model", RandomForestClassifier(class_weight="balanced", random_state=42))
     ]
 )
+search = RandomizedSearchCV(
+    rf_base,
+    param_distributions=param_dist,
+    n_iter=24,  # 24 random combinations; 5-fold CV = 120 fits
+    cv=5,
+    scoring="roc_auc",
+    random_state=42,
+    n_jobs=-1,
+    verbose=1,
+)
+print("Running hyperparameter search (24 configs x 5-fold CV)...")
+search.fit(X_train, y_train)
+rf_model = search.best_estimator_
+print(f"Best params: {search.best_params_}")
+print(f"Best 5-fold CV ROC-AUC: {search.best_score_:.3f}")
 
-rf_model.fit(X_train, y_train)
 rf_preds = rf_model.predict_proba(X_test)[:, 1]
-print("Random Forest ROC-AUC:", roc_auc_score(y_test, rf_preds))
+print("Random Forest (tuned) test ROC-AUC:", roc_auc_score(y_test, rf_preds))
 
-# 5-fold cross-validation
-cv_scores = cross_val_score(rf_model, X_train, y_train, cv=5, scoring="roc_auc")
-cv_mean = float(cv_scores.mean())
-cv_std = float(cv_scores.std())
-print(f"5-fold CV ROC-AUC: {cv_mean:.3f} (+/- {cv_std:.3f})")
+cv_mean = float(search.best_score_)
+cv_std = float(search.cv_results_["std_test_score"][search.best_index_])
 
 # -----------------------------
 # Feature Importance
@@ -153,6 +173,71 @@ log_model_path = model_dir / "logistic_model.pkl"
 joblib.dump(log_model, log_model_path)
 print(f"Logistic model saved to {log_model_path}")
 
+# -----------------------------
+# Fairness: stratified ROC-AUC by age, gender, ethnicity
+# -----------------------------
+def compute_fairness_metrics(X_test_raw, y_test, preds):
+    """Compute ROC-AUC per subgroup. Returns list of dicts for JSON."""
+    results = []
+    X_test_raw = X_test_raw.copy()
+    # Clean age for grouping
+    X_test_raw["age_clean"] = X_test_raw["age"].replace("> 89", 90)
+    X_test_raw["age_clean"] = pd.to_numeric(X_test_raw["age_clean"], errors="coerce")
+    X_test_raw["age_clean"] = X_test_raw["age_clean"].fillna(X_test_raw["age_clean"].median())
+
+    def add_subgroup(name, mask):
+        n = int(mask.sum())
+        m = mask.values if hasattr(mask, "values") else mask
+        n_pos = int(np.sum(np.asarray(y_test)[m]))
+        if n < 20 or n_pos < 3:  # ROC-AUC unreliable with few samples
+            return
+        try:
+            auc = roc_auc_score(np.asarray(y_test)[m], np.asarray(preds)[m])
+        except ValueError:
+            return
+        results.append({
+            "subgroup": name,
+            "n": int(n),
+            "n_positive": n_pos,
+            "roc_auc": round(float(auc), 4),
+        })
+
+    # Age groups
+    for label, lo, hi in [("<50", 0, 50), ("50-64", 50, 65), ("65-79", 65, 80), ("80+", 80, 200)]:
+        mask = (X_test_raw["age_clean"] >= lo) & (X_test_raw["age_clean"] < hi)
+        add_subgroup(f"Age {label}", mask)
+
+    # Gender
+    for g in ["Male", "Female"]:
+        mask = X_test_raw["gender"].astype(str).str.strip() == g
+        add_subgroup(f"Gender: {g}", mask)
+
+    # Ethnicity (groups with >= 20 samples)
+    eth_str = X_test_raw["ethnicity"].astype(str).str.strip()
+    for eth in eth_str.unique():
+        if eth in ("nan", "unknown", ""):
+            continue
+        mask = eth_str == eth
+        if mask.sum() >= 20:
+            add_subgroup(f"Ethnicity: {eth}", mask)
+
+    return results
+
+# X_test has same index as original; get raw demographics
+X_test_raw = X.loc[X_test.index].copy()
+fairness_results = compute_fairness_metrics(X_test_raw, y_test.values, rf_preds)
+
+# -----------------------------
+# Calibration: predicted vs observed risk
+# -----------------------------
+frac_pos, mean_pred = calibration_curve(
+    np.asarray(y_test), rf_preds, n_bins=10, strategy="uniform"
+)
+calibration_data = {
+    "mean_predicted": [round(float(x), 4) for x in mean_pred],
+    "fraction_positive": [round(float(x), 4) for x in frac_pos],
+}
+
 # Save metrics for app display
 rf_auc = roc_auc_score(y_test, rf_preds)
 log_auc = roc_auc_score(y_test, log_preds)
@@ -171,8 +256,15 @@ metrics = {
         "test_neg": int((1 - y_test).sum()),
     },
     "model_type": "RandomForest",
-    "n_estimators": 200,
+    "n_estimators": int(rf_model.named_steps["model"].n_estimators),
+    "best_params": {k.replace("model__", ""): str(v) for k, v in search.best_params_.items()},
+    "fairness": fairness_results,
+    "calibration": calibration_data,
 }
 with open(model_dir / "model_metrics.json", "w") as f:
     json.dump(metrics, f, indent=2)
 print(f"Metrics saved to {model_dir / 'model_metrics.json'}")
+print("\nFairness (stratified ROC-AUC on test set):")
+for r in fairness_results:
+    print(f"  {r['subgroup']}: n={r['n']}, n_pos={r['n_positive']}, ROC-AUC={r['roc_auc']:.3f}")
+print("\nCalibration: mean predicted vs fraction positive (10 bins) saved to model_metrics.json")
