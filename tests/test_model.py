@@ -14,6 +14,8 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.validation import validate_inputs
+
 EXPECTED_COLUMNS = [
     "age", "gender", "ethnicity", "max_heart_rate", "min_systolic_bp", "avg_diastolic_bp",
     "max_wbc", "min_wbc", "avg_wbc", "max_creatinine", "min_creatinine", "avg_creatinine",
@@ -84,6 +86,33 @@ def test_prediction_values():
     proba = model.predict_proba(X)[0]
     assert np.all(proba >= 0) and np.all(proba <= 1)
     assert np.isclose(proba.sum(), 1.0)
+
+
+def test_validate_inputs_accepts_valid():
+    """Valid inputs pass validation."""
+    row = create_sample_input().iloc[0].to_dict()
+    valid, errors = validate_inputs(row)
+    assert valid, f"Expected valid, got errors: {errors}"
+    assert len(errors) == 0
+
+
+def test_validate_inputs_rejects_out_of_range():
+    """Out-of-range values fail validation."""
+    row = create_sample_input().iloc[0].to_dict()
+    row["age"] = 200  # outside 18-120
+    valid, errors = validate_inputs(row)
+    assert not valid
+    assert any("age" in e.lower() or "Age" in e for e in errors)
+
+
+def test_validate_inputs_rejects_min_exceeds_max():
+    """Min > max for paired values fails validation."""
+    row = create_sample_input().iloc[0].to_dict()
+    row["min_sodium"] = 150
+    row["max_sodium"] = 130
+    valid, errors = validate_inputs(row)
+    assert not valid
+    assert any("sodium" in e.lower() for e in errors)
 
 
 if __name__ == "__main__":

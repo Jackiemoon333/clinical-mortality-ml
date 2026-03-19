@@ -161,6 +161,10 @@ See [docs/MODEL_CARD.md](docs/MODEL_CARD.md) for intended use, limitations, and 
 - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
 - **Output:** Probability of ICU mortality (0–100%)
 
+## Lessons Learned
+
+I tuned for 5-fold CV ROC-AUC and evaluated fairness and calibration separately on the held-out test set—rather than optimizing for them during tuning—because overall discrimination was the primary objective, and I wanted to see how the selected model performed across subgroups without conflating selection with evaluation. The fairness analysis was instructive: performance was consistent across age, gender, and ethnicity, but some subgroups (e.g., Hispanic) had too few samples for reliable metrics, so I excluded them. I used median imputation for missing numerics; in a next iteration I’d experiment with alternatives (e.g., KNN or iterative imputation) to see if they better preserve subgroup-specific patterns. If I extended this project, I’d add calibration-by-subgroup and bootstrap confidence intervals for subgroup ROC-AUC to better quantify uncertainty.
+
 ## License
 
 MIT. The eICU dataset has its own license; ensure compliance when using it.
