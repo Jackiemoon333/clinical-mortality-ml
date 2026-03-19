@@ -26,7 +26,7 @@ This project uses the [eICU Collaborative Research Database](https://eicu-crd.mi
 | Class balance (train) | 294 positive / 3,192 negative (~8.4% mortality) |
 | Features (post-preprocessing) | 23 |
 
-**Model:** Random Forest (hyperparameters tuned via RandomizedSearchCV, 5-fold CV ROC-AUC). Preprocessing: `ColumnTransformer` with `OneHotEncoder` for categoricals (gender, ethnicity) and `SimpleImputer(strategy="median")` for numerics. See [docs/HYPERPARAMETER_TUNING.md](docs/HYPERPARAMETER_TUNING.md) for parameter rationale and how tuning relates to fairness/calibration.
+**Model:** Random Forest (hyperparameters tuned via RandomizedSearchCV, 5-fold CV ROC-AUC). Preprocessing: `ColumnTransformer` with `OneHotEncoder` for categoricals (gender, ethnicity) and `SimpleImputer(strategy="median")` for numerics.
 
 **Top drivers of risk** (by mean |SHAP|): sodium (min/max), heart rate, creatinine, systolic BP, age, WBC.
 

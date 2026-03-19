@@ -512,7 +512,6 @@ with tab4:
     if best_params:
         with st.expander("Hyperparameters (tuned via RandomizedSearchCV)"):
             st.json(best_params)
-            st.caption("See [docs/HYPERPARAMETER_TUNING.md](docs/HYPERPARAMETER_TUNING.md) for rationale.")
     # Fairness analysis
     with st.expander("Fairness: stratified performance by subgroup"):
         fairness = metrics.get("fairness", []) if metrics_path.exists() else []

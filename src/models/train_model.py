@@ -74,7 +74,7 @@ print("Logistic Regression ROC-AUC:", roc_auc_score(y_test, log_preds))
 # -----------------------------
 # Random Forest with hyperparameter tuning
 # -----------------------------
-# Param grid: see docs/HYPERPARAMETER_TUNING.md for rationale
+# Param grid: n_estimators, max_depth, min_samples_*, max_features
 param_dist = {
     "model__n_estimators": [100, 200, 300],
     "model__max_depth": [8, 12, 16, None],
