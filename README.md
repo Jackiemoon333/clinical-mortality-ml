@@ -2,7 +2,9 @@
 
 **[Live demo](https://clinical-mortality-ml-ja.streamlit.app/)**
 
-Early identification of ICU deterioration can improve outcomes and reduce mortality. This project builds interpretable machine learning models to predict mortality risk from early patient data and provides insights to support clinical decision-making.
+*Built an end-to-end machine learning pipeline on ICU clinical data achieving ROC-AUC of 0.91, with interpretable predictions (SHAP and LR coefficients) and a deployed interactive application.*
+
+Early identification of high-risk ICU patients can improve outcomes and guide clinical intervention. This project builds interpretable machine learning models to predict mortality risk from early patient data and provides actionable insights for clinical decision-making.
 
 **Quick links:** [Key Results](#key-results) · [Problem Statement](#overview) · [Model Performance](#model) · [Limitations](#limitations)
 
@@ -32,7 +34,7 @@ This project uses the [eICU Collaborative Research Database](https://eicu-crd.mi
 
 **Top drivers of risk** (by mean |SHAP|): sodium (min/max), heart rate, creatinine, systolic BP, age, WBC.
 
-**APACHE comparison:** The app includes a scatter plot comparing model predictions with eICU's built-in APACHE predicted ICU mortality; correlation is computed on a sample from the training data.
+**APACHE comparison:** The app includes a scatter plot comparing model predictions with eICU's built-in APACHE predicted ICU mortality; correlation is computed on a sample from the training data. Compared to traditional scoring systems like APACHE, this model leverages flexible machine learning approaches and feature interactions, offering strong predictive performance and individualized, interpretable explanations that APACHE does not provide.
 
 **Fairness:** Stratified ROC-AUC by age group, gender, and ethnicity (see Model Info tab and [docs/MODEL_CARD.md](docs/MODEL_CARD.md)).
 
