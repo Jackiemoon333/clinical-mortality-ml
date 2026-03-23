@@ -71,6 +71,56 @@
       "roc_auc": 0.8571
     }
   ],
+  "logistic_fairness": [
+    {
+      "subgroup": "Age <50",
+      "n": 198,
+      "n_positive": 3,
+      "roc_auc": 0.9419
+    },
+    {
+      "subgroup": "Age 50-64",
+      "n": 214,
+      "n_positive": 7,
+      "roc_auc": 0.8875
+    },
+    {
+      "subgroup": "Age 65-79",
+      "n": 309,
+      "n_positive": 31,
+      "roc_auc": 0.6698
+    },
+    {
+      "subgroup": "Age 80+",
+      "n": 151,
+      "n_positive": 32,
+      "roc_auc": 0.7923
+    },
+    {
+      "subgroup": "Gender: Male",
+      "n": 532,
+      "n_positive": 40,
+      "roc_auc": 0.8307
+    },
+    {
+      "subgroup": "Gender: Female",
+      "n": 340,
+      "n_positive": 33,
+      "roc_auc": 0.8215
+    },
+    {
+      "subgroup": "Ethnicity: Caucasian",
+      "n": 697,
+      "n_positive": 61,
+      "roc_auc": 0.8396
+    },
+    {
+      "subgroup": "Ethnicity: Hispanic",
+      "n": 48,
+      "n_positive": 6,
+      "roc_auc": 0.8016
+    }
+  ],
   "calibration": {
     "mean_predicted": [
       0.0204,
@@ -93,6 +143,32 @@
       1.0,
       1.0,
       1.0
+    ]
+  },
+  "logistic_calibration": {
+    "mean_predicted": [
+      0.0574,
+      0.1452,
+      0.2465,
+      0.3509,
+      0.4427,
+      0.5449,
+      0.6421,
+      0.7442,
+      0.849,
+      0.9544
+    ],
+    "fraction_positive": [
+      0.0,
+      0.0069,
+      0.0345,
+      0.0859,
+      0.0833,
+      0.0286,
+      0.1311,
+      0.1667,
+      0.5172,
+      0.5333
     ]
   }
 }

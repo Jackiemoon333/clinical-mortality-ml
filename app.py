@@ -17,9 +17,10 @@ st.caption(
     "([citation](https://www.nature.com/articles/sdata2018178))."
 )
 
-# ---- Load model ----
+# ---- Load models ----
 BASE_DIR = Path(__file__).resolve().parent
-model = joblib.load(BASE_DIR / "models" / "mortality_model.pkl")
+model_rf = joblib.load(BASE_DIR / "models" / "mortality_model.pkl")
+model_lr = joblib.load(BASE_DIR / "models" / "logistic_model.pkl")
 
 # Expected columns for the model (must match training data)
 EXPECTED_COLUMNS = [
@@ -95,6 +96,41 @@ def get_patient_values_for_display(feature_names, patient_df):
     return values
 
 
+def build_lr_coefficient_rows(log_model, patient_df, feature_names):
+    """Build coefficient table rows for Logistic Regression. Aggregates one-hots like build_shap_table_rows."""
+    X_t = log_model.named_steps["preprocess"].transform(patient_df)
+    if X_t.ndim == 1:
+        X_t = X_t.reshape(1, -1)
+    x_row = X_t[0]
+    lr = log_model.named_steps["model"]
+    coef = lr.coef_.ravel()
+    n_features = min(len(coef), len(x_row), len(feature_names))
+    feature_names = feature_names[:n_features]
+    # Sanity check: coef @ x_row should approximate decision_function (minus intercept)
+    dot_prod = float(np.dot(coef[:n_features], x_row[:n_features]))
+    expected = float(lr.decision_function(X_t)[0]) - float(lr.intercept_[0])
+    assert abs(dot_prod - expected) < 1e-5, f"Feature alignment mismatch: dot={dot_prod:.4f} vs expected={expected:.4f}"
+    row = patient_df.iloc[0]
+    seen = {}
+    for i, fn in enumerate(feature_names):
+        contrib = float(coef[i]) * float(x_row[i])
+        if fn.startswith("gender_"):
+            key, display = "Gender", "Gender"
+            if str(row["gender"]).strip() == fn.replace("gender_", "").strip():
+                seen[key] = {"factor": display, "value": str(row["gender"]), "contribution": contrib}
+        elif fn.startswith("ethnicity_"):
+            key, display = "Ethnicity", "Ethnicity"
+            patient_eth = str(row["ethnicity"]).strip()
+            if patient_eth == fn.replace("ethnicity_", "").strip() or (patient_eth == "Other" and "Other" in fn):
+                seen[key] = {"factor": display, "value": str(row["ethnicity"]), "contribution": contrib}
+        else:
+            display = format_feature_name(fn)
+            val = row.get(fn, None)
+            val_str = f"{val:.2f}" if isinstance(val, (float, np.floating)) and val == val else str(val) if val is not None else "—"
+            seen[fn] = {"factor": display, "value": val_str, "contribution": contrib}
+    return list(seen.values())
+
+
 def build_shap_table_rows(feature_names, shap_1d, patient_df):
     """Build table rows: aggregate gender/ethnicity one-hots into single rows, one row per numeric feature."""
     row = patient_df.iloc[0]
@@ -136,17 +172,22 @@ def build_shap_table_rows(feature_names, shap_1d, patient_df):
             seen[fn] = {"factor": display, "value": val_str, "contribution": sv_val}
     return list(seen.values())
 
-def get_transformed_feature_names(n_features=None):
-    """Get feature names after preprocessing (OneHotEncoder expands categoricals).
-    Built manually because SimpleImputer does not provide get_feature_names_out in sklearn 1.0.x.
-    Trims to n_features if provided to match model output exactly."""
+def get_transformed_feature_names(model=None, n_features=None):
+    """Get feature names from the fitted preprocessor (canonical order).
+    Uses actual column order from transformers_ to match model output."""
+    model = model or model_rf
     preprocess = model.named_steps["preprocess"]
     cat_cols = ["gender", "ethnicity"]
     ohe = preprocess.named_transformers_["cat"]
     cat_feature_names = ohe.get_feature_names_out(cat_cols)
+    # Num: use ACTUAL order from fitted transformer (not EXPECTED_COLUMNS)
     num_cols = [c for c in EXPECTED_COLUMNS if c not in cat_cols]
+    for name, trans, cols in preprocess.transformers_:
+        if name == "num":
+            num_cols = list(cols)
+            break
     names = list(cat_feature_names) + num_cols
-    if n_features is not None and len(names) != n_features:
+    if n_features is not None:
         names = names[:n_features]
     return names
 
@@ -198,6 +239,10 @@ example_patients = {
 # ---- Select example patient ----
 selected_patient = st.selectbox("Select Example Patient", ["Custom Input"] + list(example_patients.keys()))
 patient_data = example_patients[selected_patient] if selected_patient != "Custom Input" else {}
+
+# ---- Model selector ----
+model_choice = st.radio("Model", ["Random Forest", "Logistic Regression"], horizontal=True, index=0)
+model = model_rf if model_choice == "Random Forest" else model_lr
 
 # ---- Input widgets ----
 age = st.number_input("Age", 18.0, 100.0, patient_data.get("age", 65.0))
@@ -255,13 +300,16 @@ with tab1:
         else:
             prob = model.predict_proba(input_data)[0][1]
             risk_percent = prob * 100
-            trees = model.named_steps["model"].estimators_
-            tree_probs = np.array([t.predict_proba(model.named_steps["preprocess"].transform(input_data))[:, 1] for t in trees])
-            tree_probs = tree_probs.ravel()
-            std_p = np.clip(np.std(tree_probs) * 1.96, 0, 1)
-            ci_lo = np.clip(prob - std_p, 0, 1) * 100
-            ci_hi = np.clip(prob + std_p, 0, 1) * 100
-            ci_str = f" (95% CI: {ci_lo:.1f}%–{ci_hi:.1f}%)"
+            if model_choice == "Random Forest":
+                trees = model.named_steps["model"].estimators_
+                tree_probs = np.array([t.predict_proba(model.named_steps["preprocess"].transform(input_data))[:, 1] for t in trees])
+                tree_probs = tree_probs.ravel()
+                std_p = np.clip(np.std(tree_probs) * 1.96, 0, 1)
+                ci_lo = np.clip(prob - std_p, 0, 1) * 100
+                ci_hi = np.clip(prob + std_p, 0, 1) * 100
+                ci_str = f" (95% CI: {ci_lo:.1f}%–{ci_hi:.1f}%)"
+            else:
+                ci_str = ""
             st.progress(int(risk_percent))
             if risk_percent < 5:
                 st.success(f"Low Risk: {risk_percent:.2f}%{ci_str}")
@@ -271,6 +319,7 @@ with tab1:
                 st.error(f"High Risk: {risk_percent:.2f}%{ci_str}")
             st.session_state["last_patient_data"] = input_data
             st.session_state["last_risk_percent"] = risk_percent
+            st.session_state["last_model_choice"] = model_choice
 
 # ---- Tab 2: Patient Explainability ----
 with tab2:
@@ -278,72 +327,75 @@ with tab2:
     if "last_patient_data" in st.session_state:
         patient_data = st.session_state["last_patient_data"]
         risk_pct = st.session_state.get("last_risk_percent", 0)
+        last_model = st.session_state.get("last_model_choice", "Random Forest")
 
-        X_transformed = model.named_steps['preprocess'].transform(patient_data)
-        if X_transformed.ndim == 1:
-            X_transformed = X_transformed.reshape(1, -1)
-        n_features = X_transformed.shape[1]
-        inner_model = model.named_steps['model']
-        explainer = shap.TreeExplainer(inner_model)
-        shap_values = explainer.shap_values(X_transformed)
-        shap_for_class1 = shap_values[1] if isinstance(shap_values, list) else shap_values
-        feature_names = get_transformed_feature_names(n_features)
+        feature_names = get_transformed_feature_names(model_lr if last_model == "Logistic Regression" else model_rf)
+        n_features = len(feature_names)
 
-        # A. Prediction summary
-        st.markdown(f"**Predicted mortality risk: {risk_pct:.1f}%**")
+        st.markdown(f"**Predicted mortality risk: {risk_pct:.1f}%** ({last_model})")
         st.markdown("How each factor contributes to this prediction:")
 
-        # B. Summary table (aggregate one-hot features into Gender/Ethnicity for clarity)
-        shap_raw = shap_for_class1[0] if shap_for_class1.ndim >= 2 else shap_for_class1
-        arr = np.asarray(shap_raw)
-        if arr.ndim == 3:
-            shap_1d = np.sum(arr, axis=-1).ravel()
-        elif arr.ndim == 2:
-            shap_1d = arr[0] if arr.shape[0] == 1 else arr[:, 0] if arr.shape[1] == 2 else arr[0]
+        if last_model == "Random Forest":
+            X_transformed = model_rf.named_steps['preprocess'].transform(patient_data)
+            if X_transformed.ndim == 1:
+                X_transformed = X_transformed.reshape(1, -1)
+            inner_model = model_rf.named_steps['model']
+            explainer = shap.TreeExplainer(inner_model)
+            shap_values = explainer.shap_values(X_transformed)
+            shap_for_class1 = shap_values[1] if isinstance(shap_values, list) else shap_values
+            shap_raw = shap_for_class1[0] if shap_for_class1.ndim >= 2 else shap_for_class1
+            arr = np.asarray(shap_raw)
+            if arr.ndim == 3:
+                shap_1d = np.sum(arr, axis=-1).ravel()
+            elif arr.ndim == 2:
+                shap_1d = arr[0] if arr.shape[0] == 1 else arr[:, 0] if arr.shape[1] == 2 else arr[0]
+            else:
+                shap_1d = arr
+            shap_1d = np.asarray(shap_1d).ravel()
+            table_rows = build_shap_table_rows(feature_names, shap_1d, patient_data)
+
+            table_data = [
+                {"Factor": r["factor"], "Your value": r["value"], "Contribution": f"{r['contribution']:.4f}",
+                 "Effect": "Increases risk" if r["contribution"] > 0 else "Decreases risk", "_sort_key": abs(r["contribution"])}
+                for r in table_rows
+            ]
+            table_data.sort(key=lambda r: r["_sort_key"], reverse=True)
+            table_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_sort_key"} for r in table_data[:15]])
+            st.dataframe(table_df, use_container_width=True)
+
+            st.markdown("**Feature contributions (bar chart)**")
+            display_names = [format_feature_name(fn) for fn in feature_names]
+            shap_2d = shap_1d.reshape(1, -1)
+            plt.figure(figsize=(10, 5))
+            shap.summary_plot(shap_2d, X_transformed, feature_names=display_names, plot_type="bar", max_display=12, show=False)
+            fig = plt.gcf()
+            fig.patch.set_facecolor("#0e1117")
+            for ax in fig.axes:
+                ax.set_facecolor("#0e1117")
+                ax.tick_params(colors="white")
+                if ax.get_xlabel():
+                    ax.xaxis.label.set_color("white")
+                if ax.get_ylabel():
+                    ax.yaxis.label.set_color("white")
+                for spine in ax.spines.values():
+                    spine.set_color("white")
+                for text in ax.get_yticklabels() + ax.get_xticklabels():
+                    text.set_color("white")
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close()
         else:
-            shap_1d = arr
-        shap_1d = np.asarray(shap_1d).ravel()
-        table_rows = build_shap_table_rows(feature_names, shap_1d, patient_data)
+            table_rows = build_lr_coefficient_rows(model_lr, patient_data, feature_names)
+            table_data = [
+                {"Factor": r["factor"], "Your value": r["value"], "Contribution (log-odds)": f"{r['contribution']:.4f}",
+                 "Effect": "Increases risk" if r["contribution"] > 0 else "Decreases risk", "_sort_key": abs(r["contribution"])}
+                for r in table_rows
+            ]
+            table_data.sort(key=lambda r: r["_sort_key"], reverse=True)
+            table_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_sort_key"} for r in table_data[:15]])
+            st.dataframe(table_df, use_container_width=True)
+            st.caption("Logistic regression coefficients: contribution = coefficient × your value. Positive = increases risk.")
 
-        table_data = [
-            {
-                "Factor": r["factor"],
-                "Your value": r["value"],
-                "Contribution": f"{r['contribution']:.4f}",
-                "Effect": "Increases risk" if r["contribution"] > 0 else "Decreases risk",
-                "_sort_key": abs(r["contribution"])
-            }
-            for r in table_rows
-        ]
-        table_data.sort(key=lambda r: r["_sort_key"], reverse=True)
-        table_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_sort_key"} for r in table_data[:15]])
-        st.dataframe(table_df, use_container_width=True)
-
-        # C. Bar plot (use flattened shap_1d reshaped to 2D for summary_plot)
-        st.markdown("**Feature contributions (bar chart)**")
-        display_names = [format_feature_name(fn) for fn in feature_names]
-        shap_2d = shap_1d.reshape(1, -1)
-        plt.figure(figsize=(10, 5))
-        shap.summary_plot(shap_2d, X_transformed, feature_names=display_names,
-                         plot_type="bar", max_display=12, show=False)
-        fig = plt.gcf()
-        fig.patch.set_facecolor("#0e1117")
-        for ax in fig.axes:
-            ax.set_facecolor("#0e1117")
-            ax.tick_params(colors="white")
-            if ax.get_xlabel():
-                ax.xaxis.label.set_color("white")
-            if ax.get_ylabel():
-                ax.yaxis.label.set_color("white")
-            for spine in ax.spines.values():
-                spine.set_color("white")
-            for text in ax.get_yticklabels() + ax.get_xticklabels():
-                text.set_color("white")
-        plt.tight_layout()
-        st.pyplot(fig, use_container_width=True)
-        plt.close()
-
-        # D. Download prediction report
         st.markdown("**Download prediction report**")
         sorted_rows = sorted(table_rows, key=lambda r: -abs(r["contribution"]))[:15]
         top_factors_html = "".join(
@@ -381,51 +433,60 @@ with tab2:
 with tab3:
     st.subheader("Global Feature Importance Across Example Patients")
     if st.button("Compute Global Feature Importance"):
-        all_examples = pd.DataFrame(example_patients).T
-        all_examples["avg_sodium"] = (all_examples["max_sodium"] + all_examples["min_sodium"]) / 2
-        for col in ["num_unique_meds", "vasopressin", "norepinephrine", "dopamine",
-                    "acutephysiologyscore", "apachescore", "predictedicumortality", "predictedhospitalmortality"]:
-            if col not in all_examples.columns:
-                all_examples[col] = 0.0
-        all_examples = all_examples[EXPECTED_COLUMNS]
-        X_all_transformed = model.named_steps['preprocess'].transform(all_examples)
-        if X_all_transformed.ndim == 1:
-            X_all_transformed = X_all_transformed.reshape(1, -1)
-        n_features = X_all_transformed.shape[1]
-        inner_model = model.named_steps['model']
-        explainer = shap.TreeExplainer(inner_model)
-        shap_values_all = explainer.shap_values(X_all_transformed)
-        shap_for_class1 = shap_values_all[1] if isinstance(shap_values_all, list) else shap_values_all
-        feature_names = get_transformed_feature_names(n_features)
-
-        shap_arr = np.asarray(shap_for_class1)
-        if shap_arr.ndim == 3:
-            mean_abs_shap = np.mean(np.abs(shap_arr).sum(axis=-1), axis=0)
+        feature_names = get_transformed_feature_names(model_lr if model_choice == "Logistic Regression" else model_rf)
+        if model_choice == "Random Forest":
+            st.caption("Mean |SHAP| across example patients.")
+            all_examples = pd.DataFrame(example_patients).T
+            all_examples["avg_sodium"] = (all_examples["max_sodium"] + all_examples["min_sodium"]) / 2
+            for col in ["num_unique_meds", "vasopressin", "norepinephrine", "dopamine",
+                        "acutephysiologyscore", "apachescore", "predictedicumortality", "predictedhospitalmortality"]:
+                if col not in all_examples.columns:
+                    all_examples[col] = 0.0
+            all_examples = all_examples[EXPECTED_COLUMNS]
+            X_all_transformed = model_rf.named_steps['preprocess'].transform(all_examples)
+            if X_all_transformed.ndim == 1:
+                X_all_transformed = X_all_transformed.reshape(1, -1)
+            n_features = min(X_all_transformed.shape[1], len(feature_names))
+            feature_names = feature_names[:n_features]
+            inner_model = model_rf.named_steps['model']
+            explainer = shap.TreeExplainer(inner_model)
+            shap_values_all = explainer.shap_values(X_all_transformed)
+            shap_for_class1 = shap_values_all[1] if isinstance(shap_values_all, list) else shap_values_all
+            shap_arr = np.asarray(shap_for_class1)
+            if shap_arr.ndim == 3:
+                mean_abs_shap = np.mean(np.abs(shap_arr).sum(axis=-1), axis=0)
+            else:
+                mean_abs_shap = np.mean(np.abs(shap_arr), axis=0)
+            mean_abs_shap = mean_abs_shap[:n_features]
+            importance_vals = mean_abs_shap
+            col_label = "Mean |Contribution|"
         else:
-            mean_abs_shap = np.mean(np.abs(shap_arr), axis=0)
-        order = np.argsort(mean_abs_shap)[::-1]
-
-        # A. Ranked table
+            st.caption("|Coefficient|: for LR, coefficient magnitude = effect per unit change (global by definition).")
+            coef = model_lr.named_steps["model"].coef_.ravel()
+            n_features = min(len(coef), len(feature_names))
+            feature_names = feature_names[:n_features]
+            coef = coef[:n_features]
+            importance_vals = np.abs(coef)
+            col_label = "|Coefficient|"
+        order = np.argsort(importance_vals)[::-1]
         table_rows = []
         for rank, idx in enumerate(order[:12], 1):
             table_rows.append({
                 "Rank": rank,
                 "Factor": format_feature_name(feature_names[idx]),
-                "Mean |Contribution|": f"{mean_abs_shap[idx]:.4f}"
+                col_label: f"{importance_vals[idx]:.4f}"
             })
         st.dataframe(pd.DataFrame(table_rows), use_container_width=True)
-
-        # B. Horizontal bar chart (matching Tab 2 style)
         top_n = 10
         top_indices = order[:top_n]
         chart_df = pd.DataFrame({
             "Factor": [format_feature_name(feature_names[i]) for i in top_indices],
-            "Mean absolute contribution": [mean_abs_shap[i] for i in top_indices]
+            "Importance": [importance_vals[i] for i in top_indices]
         })
         chart_df = chart_df.iloc[::-1]
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.barh(chart_df["Factor"], chart_df["Mean absolute contribution"], color="#1f77b4")
-        ax.set_xlabel("Mean absolute contribution to risk")
+        ax.barh(chart_df["Factor"], chart_df["Importance"], color="#1f77b4")
+        ax.set_xlabel(col_label)
         ax.set_title("Top Factors by Importance")
         fig.patch.set_facecolor("#0e1117")
         ax.set_facecolor("#0e1117")
@@ -448,17 +509,27 @@ with tab4:
     if metrics_path.exists():
         with open(metrics_path) as f:
             metrics = json.load(f)
+        # Show metrics for selected model
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("ROC-AUC", f"{metrics.get('roc_auc', 0):.3f}")
+            auc_val = metrics.get("logistic_roc_auc" if model_choice == "Logistic Regression" else "roc_auc", 0)
+            st.metric("Test ROC-AUC", f"{auc_val:.3f}")
         with c2:
-            cv_mean = metrics.get("cv_roc_auc_mean")
-            cv_std = metrics.get("cv_roc_auc_std")
-            st.metric("5-fold CV ROC-AUC", f"{cv_mean:.3f} ± {cv_std:.3f}" if cv_mean is not None and cv_std is not None else "—")
+            if model_choice == "Random Forest":
+                cv_mean = metrics.get("cv_roc_auc_mean")
+                cv_std = metrics.get("cv_roc_auc_std")
+                st.metric("5-fold CV ROC-AUC", f"{cv_mean:.3f} ± {cv_std:.3f}" if cv_mean is not None and cv_std is not None else "—")
+            else:
+                st.metric("5-fold CV ROC-AUC", "—")
         with c3:
             st.metric("Training samples", metrics.get("n_train", "—"))
         with c4:
             st.metric("Test samples", metrics.get("n_test", "—"))
+        log_auc = metrics.get("logistic_roc_auc")
+        rf_auc = metrics.get("roc_auc")
+        if log_auc is not None and rf_auc is not None:
+            diff = rf_auc - log_auc
+            st.caption(f"Random Forest outperformed Logistic Regression by {diff:.3f} ROC-AUC (RF: {rf_auc:.3f}, LR: {log_auc:.3f}). LR offers direct coefficient interpretability.")
         st.markdown("**Class balance (train):** "
                     f"{metrics.get('class_balance', {}).get('train_pos', '—')} positive / "
                     f"{metrics.get('class_balance', {}).get('train_neg', '—')} negative")
@@ -466,22 +537,35 @@ with tab4:
         st.info("Run `python src/models/train_model.py` to generate model metrics.")
         st.metric("ROC-AUC", "—")
     st.subheader("Model Description")
-    best_params = metrics.get("best_params", {}) if metrics_path.exists() else {}
-    n_est = metrics.get("n_estimators", 200)
-    st.markdown(f"""
-    - **Algorithm:** Random Forest ({n_est} trees, class-balanced)
-    - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
-    - **Output:** Probability of ICU mortality (0–100%)
-    - **Data:** eICU Collaborative Research Database
-    """)
-    if best_params:
-        with st.expander("Hyperparameters (tuned via RandomizedSearchCV)"):
-            st.json(best_params)
+    if model_choice == "Random Forest":
+        best_params = metrics.get("best_params", {}) if metrics_path.exists() else {}
+        n_est = metrics.get("n_estimators", 200)
+        st.markdown(f"""
+        - **Algorithm:** Random Forest ({n_est} trees, class-balanced)
+        - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
+        - **Output:** Probability of ICU mortality (0–100%)
+        - **Data:** eICU Collaborative Research Database
+        """)
+        if best_params:
+            with st.expander("Hyperparameters (tuned via RandomizedSearchCV)"):
+                st.json(best_params)
+    else:
+        lr_model = model_lr.named_steps["model"]
+        lr_params = {"penalty": getattr(lr_model, "penalty", "l2"), "C": float(getattr(lr_model, "C", 1.0)),
+                     "solver": getattr(lr_model, "solver", "lbfgs"), "max_iter": int(getattr(lr_model, "max_iter", 1000))}
+        st.markdown("""
+        - **Algorithm:** Logistic Regression (class-balanced)
+        - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
+        - **Output:** Probability of ICU mortality (0–100%)
+        - **Data:** eICU Collaborative Research Database
+        """)
+        with st.expander("Hyperparameters"):
+            st.json(lr_params)
     # Fairness analysis
     with st.expander("Fairness: stratified performance by subgroup"):
-        fairness = metrics.get("fairness", []) if metrics_path.exists() else []
+        fairness_key = "logistic_fairness" if model_choice == "Logistic Regression" else "fairness"
+        fairness = metrics.get(fairness_key, []) if metrics_path.exists() else []
         if fairness:
-            fairness = metrics["fairness"]
             fairness_df = pd.DataFrame(fairness)
             fairness_df = fairness_df.rename(columns={"subgroup": "Subgroup", "n": "n", "n_positive": "Deaths", "roc_auc": "ROC-AUC"})
             st.dataframe(fairness_df[["Subgroup", "n", "Deaths", "ROC-AUC"]], use_container_width=True)
@@ -495,7 +579,8 @@ with tab4:
 
     # Calibration plot
     with st.expander("Calibration: predicted vs observed risk"):
-        cal = metrics.get("calibration", {}) if metrics_path.exists() else {}
+        cal_key = "logistic_calibration" if model_choice == "Logistic Regression" else "calibration"
+        cal = metrics.get(cal_key, {}) if metrics_path.exists() else {}
         if cal and "mean_predicted" in cal and "fraction_positive" in cal:
             mean_pred = cal["mean_predicted"]
             frac_pos = cal["fraction_positive"]
@@ -543,6 +628,9 @@ with tab4:
             df_apache = df_apache.dropna(subset=["predictedicumortality"])
             df_apache["predictedicumortality"] = pd.to_numeric(df_apache["predictedicumortality"], errors="coerce")
             df_apache = df_apache.dropna(subset=["predictedicumortality"])
+            df_apache = df_apache[
+                (df_apache["predictedicumortality"] >= 0) & (df_apache["predictedicumortality"] <= 1)
+            ]
             # Clean age to match training ("> 89" -> 90)
             df_apache["age"] = df_apache["age"].replace("> 89", 90)
             df_apache["age"] = pd.to_numeric(df_apache["age"], errors="coerce")

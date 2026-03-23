@@ -63,6 +63,16 @@ def test_load_model():
     assert hasattr(model, "predict_proba")
 
 
+def test_load_logistic_model():
+    """Logistic model file exists and can be loaded."""
+    model_path = PROJECT_ROOT / "models" / "logistic_model.pkl"
+    assert model_path.exists(), f"Logistic model not found at {model_path}"
+    model = joblib.load(model_path)
+    assert model is not None
+    assert hasattr(model, "predict_proba")
+    assert hasattr(model.named_steps["model"], "coef_")
+
+
 def test_prediction_shape():
     """Prediction returns correct shape."""
     model_path = PROJECT_ROOT / "models" / "mortality_model.pkl"
@@ -79,6 +89,31 @@ def test_prediction_shape():
 def test_prediction_values():
     """Prediction probabilities are valid (0–1)."""
     model_path = PROJECT_ROOT / "models" / "mortality_model.pkl"
+    if not model_path.exists():
+        return
+    model = joblib.load(model_path)
+    X = create_sample_input()
+    proba = model.predict_proba(X)[0]
+    assert np.all(proba >= 0) and np.all(proba <= 1)
+    assert np.isclose(proba.sum(), 1.0)
+
+
+def test_logistic_prediction_shape():
+    """LR model prediction returns correct shape."""
+    model_path = PROJECT_ROOT / "models" / "logistic_model.pkl"
+    if not model_path.exists():
+        return
+    model = joblib.load(model_path)
+    X = create_sample_input()
+    proba = model.predict_proba(X)
+    assert proba.ndim == 2
+    assert proba.shape[0] == 1
+    assert proba.shape[1] == 2
+
+
+def test_logistic_prediction_values():
+    """LR model prediction probabilities are valid (0–1)."""
+    model_path = PROJECT_ROOT / "models" / "logistic_model.pkl"
     if not model_path.exists():
         return
     model = joblib.load(model_path)

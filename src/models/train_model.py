@@ -226,6 +226,7 @@ def compute_fairness_metrics(X_test_raw, y_test, preds):
 # X_test has same index as original; get raw demographics
 X_test_raw = X.loc[X_test.index].copy()
 fairness_results = compute_fairness_metrics(X_test_raw, y_test.values, rf_preds)
+logistic_fairness_results = compute_fairness_metrics(X_test_raw, y_test.values, log_preds)
 
 # -----------------------------
 # Calibration: predicted vs observed risk
@@ -236,6 +237,13 @@ frac_pos, mean_pred = calibration_curve(
 calibration_data = {
     "mean_predicted": [round(float(x), 4) for x in mean_pred],
     "fraction_positive": [round(float(x), 4) for x in frac_pos],
+}
+frac_pos_lr, mean_pred_lr = calibration_curve(
+    np.asarray(y_test), log_preds, n_bins=10, strategy="uniform"
+)
+logistic_calibration = {
+    "mean_predicted": [round(float(x), 4) for x in mean_pred_lr],
+    "fraction_positive": [round(float(x), 4) for x in frac_pos_lr],
 }
 
 # Save metrics for app display
@@ -259,7 +267,9 @@ metrics = {
     "n_estimators": int(rf_model.named_steps["model"].n_estimators),
     "best_params": {k.replace("model__", ""): str(v) for k, v in search.best_params_.items()},
     "fairness": fairness_results,
+    "logistic_fairness": logistic_fairness_results,
     "calibration": calibration_data,
+    "logistic_calibration": logistic_calibration,
 }
 with open(model_dir / "model_metrics.json", "w") as f:
     json.dump(metrics, f, indent=2)

@@ -2,7 +2,9 @@
 
 **[Live demo](https://clinical-mortality-ml-ja.streamlit.app/)**
 
-A machine learning application that predicts ICU mortality risk from patient vitals and lab values, with SHAP-based explainability for interpretable predictions.
+Early identification of ICU deterioration can improve outcomes and reduce mortality. This project builds interpretable machine learning models to predict mortality risk from early patient data and provides insights to support clinical decision-making.
+
+**Quick links:** [Key Results](#key-results) · [Problem Statement](#overview) · [Model Performance](#model) · [Limitations](#limitations)
 
 ## Overview
 
@@ -26,7 +28,7 @@ This project uses the [eICU Collaborative Research Database](https://eicu-crd.mi
 | Class balance (train) | 294 positive / 3,192 negative (~8.4% mortality) |
 | Features (post-preprocessing) | 23 |
 
-**Model:** Random Forest (hyperparameters tuned via RandomizedSearchCV, 5-fold CV ROC-AUC). Preprocessing: `ColumnTransformer` with `OneHotEncoder` for categoricals (gender, ethnicity) and `SimpleImputer(strategy="median")` for numerics.
+**Model:** Random Forest (primary) and Logistic Regression (baseline). Both trained with the same preprocessing. Random Forest outperformed Logistic Regression by ~0.09 ROC-AUC, but Logistic Regression offers direct coefficient interpretability. The app lets you switch between models and compare predictions.
 
 **Top drivers of risk** (by mean |SHAP|): sodium (min/max), heart rate, creatinine, systolic BP, age, WBC.
 
@@ -79,7 +81,7 @@ Place the eICU SQLite database at `data/raw/eicu_v2_0_1.sqlite3` and run the fea
 python src/models/train_model.py
 ```
 
-This creates `models/mortality_model.pkl` and `models/model_metrics.json`.
+This creates `models/mortality_model.pkl`, `models/logistic_model.pkl`, and `models/model_metrics.json`.
 
 ### 4. Run the app
 
@@ -94,7 +96,7 @@ Open http://localhost:8501 in your browser.
 1. Push this repo to GitHub.
 2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub.
 3. Click "New app", select your repo, set main file to `app.py`.
-4. Ensure `models/mortality_model.pkl` and `models/model_metrics.json` are committed (required for deployment).
+4. Ensure `models/mortality_model.pkl`, `models/logistic_model.pkl`, and `models/model_metrics.json` are committed (required for deployment).
 5. Deploy; add the live URL to your portfolio.
 
 ### 6. Run tests (optional)
@@ -122,10 +124,11 @@ pip install -r requirements.txt
 ## Data Pipeline
 
 ```
-eICU SQLite DB → SQL queries → mortality_features.csv → train_model.py → mortality_model.pkl
+Raw eICU Data → Feature Engineering (SQL + aggregation) → mortality_features.csv
+     → train_model.py → Random Forest + Logistic Regression → SHAP / Coefficients → Streamlit App
 ```
 
-See `scripts/build_features.py` (or `notebooks/explore_data.ipynb`) for the ETL steps that produce the processed CSV from the raw eICU database.
+**Detail:** `scripts/build_features.py` runs SQL against the eICU SQLite database to extract vitals, labs, and demographics, then aggregates to per-stay features (e.g., min/max sodium, avg creatinine). `train_model.py` produces both models. The app serves predictions with either SHAP (RF) or coefficient tables (LR).
 
 ## Project Structure
 
@@ -157,9 +160,22 @@ clinical-mortality-ml/
 
 See [docs/MODEL_CARD.md](docs/MODEL_CARD.md) for intended use, limitations, and ethical considerations.
 
-- **Algorithm:** Random Forest (200 trees, class-balanced)
+- **Algorithms:** Random Forest (200 trees, class-balanced) and Logistic Regression
 - **Features:** Age, gender, ethnicity, vitals (heart rate, BP), labs (creatinine, WBC, sodium), APACHE scores
 - **Output:** Probability of ICU mortality (0–100%)
+
+## Clinical Interpretation
+
+Top drivers (sodium, creatinine, heart rate) reflect known physiology: electrolyte disturbances and kidney function are markers of severity. High sodium variability (wide min–max spread) can indicate fluid shifts or dysregulation. Creatinine reflects renal function; elevated values often correlate with worse outcomes.
+
+## Limitations
+
+- **Dataset size:** ~4,300 patients; performance may vary with larger or different populations.
+- **Class imbalance:** ~8% mortality rate; class weights used but rare events remain harder to predict.
+- **Not real-time:** Predictions use aggregated stay data (min/max/avg), not streaming vitals.
+- **Not externally validated:** Trained and evaluated on eICU only; not validated on other ICU databases.
+
+See [docs/MODEL_CARD.md](docs/MODEL_CARD.md) for additional details.
 
 ## Lessons Learned
 
